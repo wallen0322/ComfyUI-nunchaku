@@ -623,6 +623,7 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
         guidance: torch.Tensor = None,
         ref_latents=None,
         transformer_options={},
+        control=None,
         **kwargs,
     ):
         """
@@ -757,7 +758,7 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
                         image_rotary_emb=image_rotary_emb,
                     )
                 # ControlNet helpers(device/dtype-safe residual adds)
-                _control = kwargs.get("control", None) if "control" in kwargs else (transformer_options.get("control", None) if isinstance(transformer_options, dict) else None)
+                _control = control if control is not None else (transformer_options.get("control", None) if isinstance(transformer_options, dict) else None)
                 if isinstance(_control, dict):
                     control_i = _control.get("input")
                     try:
