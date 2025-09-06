@@ -614,6 +614,29 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
         )
         self.gradient_checkpointing = False
 
+    def forward(
+        self,
+        x,
+        timesteps,
+        context,
+        attention_mask=None,
+        guidance: torch.Tensor = None,
+        ref_latents=None,
+        transformer_options={},
+        **kwargs,
+    ):
+        """Public forward wrapper keeping ComfyUI Qwen-Image interface; delegates to _forward."""
+        return self._forward(
+            x,
+            timesteps,
+            context,
+            attention_mask=attention_mask,
+            guidance=guidance,
+            ref_latents=ref_latents,
+            transformer_options=transformer_options,
+            **kwargs,
+        )
+
     def _forward(
         self,
         x,
@@ -725,15 +748,6 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
         if self.offload:
             self.offload_manager.initialize(compute_stream)
 
-        # ControlNet helpers(device/dtype-safe residual adds)
-        control = kwargs.get("control", None) if "control" in kwargs else None
-        if control is None:
-            control = transformer_options.get("control", None) if isinstance(transformer_options, dict) else None
-        try:
-            control_scale = float(control.get("weight", control.get("scale", 1.0))) if isinstance(control, dict) else 1.0
-        except Exception:
-            control_scale = 1.0
-
         for i, block in enumerate(self.transformer_blocks):
             with torch.cuda.stream(compute_stream):
                 if self.offload:
@@ -766,16 +780,24 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
                         image_rotary_emb=image_rotary_emb,
                     )
                 # ControlNet helpers(device/dtype-safe residual adds)
-                if control is not None:  # Controlnet
-                    control_i = control.get("input") if isinstance(control, dict) else None
-                    if control_i is not None and i < len(control_i):
-                        add = control_i[i]
-                        if add is not None:
-                            if getattr(add, 'device', None) != hidden_states.device or getattr(add, 'dtype', None) != hidden_states.dtype:
-                                add = add.to(device=hidden_states.device, dtype=hidden_states.dtype, non_blocking=True)
-                            t = min(hidden_states.shape[1], add.shape[1])
-                            if t > 0:
-                                hidden_states[:, :t].add_(add[:, :t], alpha=control_scale)
+                _control = kwargs.get("control", None) if "control" in kwargs else (transformer_options.get("control", None) if isinstance(transformer_options, dict) else None)
+                if isinstance(_control, dict):
+                    control_i = _control.get("input")
+                    try:
+                        _scale = float(_control.get("weight", _control.get("scale", 1.0)))
+                    except Exception:
+                        _scale = 1.0
+                else:
+                    control_i = None
+                    _scale = 1.0
+                if control_i is not None and i < len(control_i):
+                    add = control_i[i]
+                    if add is not None:
+                        if getattr(add, 'device', None) != hidden_states.device or getattr(add, 'dtype', None) != hidden_states.dtype:
+                            add = add.to(device=hidden_states.device, dtype=hidden_states.dtype, non_blocking=True)
+                        t = min(hidden_states.shape[1], add.shape[1])
+                        if t > 0:
+                            hidden_states[:, :t].add_(add[:, :t], alpha=_scale)
 
             if self.offload:
                 self.offload_manager.step(compute_stream)
