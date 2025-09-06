@@ -28,49 +28,6 @@ from nunchaku.ops.fused import fused_gelu_mlp
 
 from ..mixins.model import NunchakuModelMixin
 
-# ---------- ControlNet helpers (device/dtype-safe residual adds) ----------
-
-def _to_dev_dtype(t: Optional[torch.Tensor], ref: torch.Tensor) -> Optional[torch.Tensor]:
-    """Move tensor to ref's device/dtype if needed (non_blocking when possible)."""
-    if t is None or not isinstance(t, torch.Tensor):
-        return None
-    if t.device == ref.device and t.dtype == ref.dtype:
-        return t
-    return t.to(device=ref.device, dtype=ref.dtype, non_blocking=True)
-
-
-def _apply_residual(base: torch.Tensor, resid: Optional[torch.Tensor], scale: float = 1.0) -> torch.Tensor:
-    """Safely add residual to base (handles broadcast + token-length overlap)."""
-    if resid is None:
-        return base
-    if not isinstance(resid, torch.Tensor) or resid.numel() == 0:
-        return base
-    # Try fast in-place add first
-    try:
-        base.add_(resid, alpha=scale)
-        return base
-    except Exception:
-        pass
-    # Overlap on sequence length if shapes differ
-    if base.dim() == 3 and resid.dim() == 3 and base.shape[0] == resid.shape[0] and base.shape[2] == resid.shape[2]:
-        b, sb, d = base.shape
-        _, sr, _ = resid.shape
-        s = min(sb, sr)
-        if s > 0:
-            base[:, :s, :].add_(resid[:, :s, :], alpha=scale)
-        return base
-    # Fallback: try to expand dims
-    tmp = resid
-    try:
-        while tmp.dim() < base.dim():
-            tmp = tmp.unsqueeze(1)
-        base.add_(tmp, alpha=scale)
-    except Exception:
-        pass
-    return base
-
-
-
 
 class NunchakuGELU(GELU):
     """
@@ -521,7 +478,6 @@ class NunchakuQwenImageTransformerBlock(nn.Module):
             hidden_states=img_modulated,  # Image stream ("sample")
             encoder_hidden_states=txt_modulated,  # Text stream ("context")
             encoder_hidden_states_mask=encoder_hidden_states_mask,
-            attention_mask=encoder_hidden_states_mask,
             image_rotary_emb=image_rotary_emb,
         )
 
@@ -761,30 +717,22 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
             else self.time_text_embed(timestep, guidance, hidden_states)
         )
 
-        # ---- ControlNet config (optional) ----
-        control = kwargs.get("control", None)
-        if control is None:
-            control = transformer_options.get("control", None)
-        try:
-            control_scale = float(control.get("weight", control.get("scale", 1.0))) if isinstance(control, dict) else 1.0
-        except Exception:
-            control_scale = 1.0
-        c_input_img = control.get("input", None) if isinstance(control, dict) else None
-        c_input_txt = control.get("input_txt", None) if isinstance(control, dict) else None
-        c_output_img = control.get("output", None) if isinstance(control, dict) else None
-        c_output_txt = control.get("output_txt", None) if isinstance(control, dict) else None
-
         patches_replace = transformer_options.get("patches_replace", {})
-        blocks_replace = {}
-        for _k in ("dit", "qwen", "double_blocks", "blocks"):
-            _v = patches_replace.get(_k, {})
-            if isinstance(_v, dict):
-                blocks_replace.update(_v)
+        blocks_replace = patches_replace.get("dit", {})
 
         # Setup compute stream for offloading
         compute_stream = torch.cuda.current_stream()
         if self.offload:
             self.offload_manager.initialize(compute_stream)
+
+        # ControlNet helpers(device/dtype-safe residual adds)
+        control = kwargs.get("control", None) if "control" in kwargs else None
+        if control is None:
+            control = transformer_options.get("control", None) if isinstance(transformer_options, dict) else None
+        try:
+            control_scale = float(control.get("weight", control.get("scale", 1.0))) if isinstance(control, dict) else 1.0
+        except Exception:
+            control_scale = 1.0
 
         for i, block in enumerate(self.transformer_blocks):
             with torch.cuda.stream(compute_stream):
@@ -817,35 +765,17 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
                         temb=temb,
                         image_rotary_emb=image_rotary_emb,
                     )
-
-                # ---- ControlNet per-layer residual adds (device/dtype aligned; safe overlap) ----
-                if c_input_img is not None and i < len(c_input_img):
-                    add = _to_dev_dtype(c_input_img[i], hidden_states)
-                    if add is not None:
-                        if add.dim() == 3 and hidden_states.dim() == 3 and add.shape[1] > hidden_states.shape[1]:
-                            add = add[:, :hidden_states.shape[1], :]
-                        _apply_residual(hidden_states, add, control_scale)
-
-                if c_input_txt is not None and i < len(c_input_txt):
-                    addt = _to_dev_dtype(c_input_txt[i], encoder_hidden_states)
-                    if addt is not None:
-                        if addt.dim() == 3 and encoder_hidden_states.dim() == 3 and addt.shape[1] > encoder_hidden_states.shape[1]:
-                            addt = addt[:, :encoder_hidden_states.shape[1], :]
-                        _apply_residual(encoder_hidden_states, addt, control_scale)
-
-                if c_output_img is not None and i < len(c_output_img):
-                    addo = _to_dev_dtype(c_output_img[i], hidden_states)
-                    if addo is not None:
-                        if addo.dim() == 3 and hidden_states.dim() == 3 and addo.shape[1] > hidden_states.shape[1]:
-                            addo = addo[:, :hidden_states.shape[1], :]
-                        _apply_residual(hidden_states, addo, control_scale)
-
-                if c_output_txt is not None and i < len(c_output_txt):
-                    addot = _to_dev_dtype(c_output_txt[i], encoder_hidden_states)
-                    if addot is not None:
-                        if addot.dim() == 3 and encoder_hidden_states.dim() == 3 and addot.shape[1] > encoder_hidden_states.shape[1]:
-                            addot = addot[:, :encoder_hidden_states.shape[1], :]
-                        _apply_residual(encoder_hidden_states, addot, control_scale)
+                # ControlNet helpers(device/dtype-safe residual adds)
+                if control is not None:  # Controlnet
+                    control_i = control.get("input") if isinstance(control, dict) else None
+                    if control_i is not None and i < len(control_i):
+                        add = control_i[i]
+                        if add is not None:
+                            if getattr(add, 'device', None) != hidden_states.device or getattr(add, 'dtype', None) != hidden_states.dtype:
+                                add = add.to(device=hidden_states.device, dtype=hidden_states.dtype, non_blocking=True)
+                            t = min(hidden_states.shape[1], add.shape[1])
+                            if t > 0:
+                                hidden_states[:, :t].add_(add[:, :t], alpha=control_scale)
 
             if self.offload:
                 self.offload_manager.step(compute_stream)
