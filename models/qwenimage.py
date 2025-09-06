@@ -614,29 +614,6 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
         )
         self.gradient_checkpointing = False
 
-    def forward(
-        self,
-        x,
-        timesteps,
-        context,
-        attention_mask=None,
-        guidance: torch.Tensor = None,
-        ref_latents=None,
-        transformer_options={},
-        **kwargs,
-    ):
-        """Public forward wrapper keeping ComfyUI Qwen-Image interface; delegates to _forward."""
-        return self._forward(
-            x,
-            timesteps,
-            context,
-            attention_mask=attention_mask,
-            guidance=guidance,
-            ref_latents=ref_latents,
-            transformer_options=transformer_options,
-            **kwargs,
-        )
-
     def _forward(
         self,
         x,
