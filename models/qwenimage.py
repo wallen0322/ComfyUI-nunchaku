@@ -27,7 +27,7 @@ from nunchaku.models.utils import CPUOffloadManager
 from nunchaku.ops.fused import fused_gelu_mlp
 
 from ..mixins.model import NunchakuModelMixin
-import comfy.patcher_extension
+import comfy.patcher_extension  # required for WrapperExecutor (forward wrapper)
 
 
 class NunchakuGELU(GELU):
@@ -614,30 +614,69 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
             device=device,
         )
         self.gradient_checkpointing = False
+
     def forward(
+
         self,
+
         x,
+
         timesteps,
+
         context,
+
         attention_mask=None,
+
         guidance=None,
+
         ref_latents=None,
+
         transformer_options={},
+
         control=None,
+
         **kwargs,
+
     ):
+
         """Forward wrapper: explicitly pass `control` to `_forward` via WrapperExecutor.
-        Source: mirrors ComfyUI qwen_image/model.py forward wrapper semantics.
+
+        Mirrors ComfyUI qwen_image/model.py forward wrapper semantics.
+
         """
+
         return comfy.patcher_extension.WrapperExecutor.new_class_executor(
+
             self._forward,
+
             self,
+
             comfy.patcher_extension.get_all_wrappers(
-                comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, transformer_options
+
+                comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, transformer_options,
+
             ),
+
         ).execute(
-            x, timesteps, context, attention_mask, guidance,
-            ref_latents, transformer_options, control, **kwargs
+
+            x,
+
+            timesteps,
+
+            context,
+
+            attention_mask,
+
+            guidance,
+
+            ref_latents,
+
+            transformer_options,
+
+            control,
+
+            **kwargs,
+
         )
 
 
