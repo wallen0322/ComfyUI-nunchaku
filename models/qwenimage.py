@@ -27,7 +27,6 @@ from nunchaku.models.utils import CPUOffloadManager
 from nunchaku.ops.fused import fused_gelu_mlp
 
 from ..mixins.model import NunchakuModelMixin
-import comfy.patcher_extension
 
 
 class NunchakuGELU(GELU):
@@ -614,28 +613,6 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
             device=device,
         )
         self.gradient_checkpointing = False
-    def forward(
-        self,
-        x,
-        timesteps,
-        context,
-        attention_mask=None,
-        guidance=None,
-        ref_latents=None,
-        transformer_options={},
-        control=None,
-        **kwargs,
-    ):
-        # Explicitly forward `control` to `_forward` using the WrapperExecutor.
-        # Source: mirrors ComfyUI qwen_image/model.py forward wrapper semantics.
-        return comfy.patcher_extension.WrapperExecutor.new_class_executor(
-            self._forward,
-            self,
-            comfy.patcher_extension.get_all_wrappers(
-                comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, transformer_options
-            ),
-        ).execute(x, timesteps, context, attention_mask, guidance, ref_latents, transformer_options, control, **kwargs)
-
 
     def _forward(
         self,
@@ -677,6 +654,10 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
             Output tensor of shape (batch, channels, height, width), matching the input spatial dimensions.
 
         """
+        # ControlNet fallback: if `control` wasn't explicitly passed, try transformer_options or kwargs.
+        # Source: ComfyUI Qwen-Image forward/_forward behavior (ensures ControlNet residuals aren't lost via wrapper kwargs).
+        control = control or (transformer_options.get("control") if isinstance(transformer_options, dict) else None) or (kwargs.get("control") if isinstance(kwargs, dict) else None)
+
         device = x.device
         if self.offload:
             self.offload_manager.set_device(device)
