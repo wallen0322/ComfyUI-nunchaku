@@ -613,13 +613,13 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
             dtype=dtype,
             device=device,
         )
-        self.gradient_checkpointing = False
-
-    # Forward wrapper: explicitly pass `control` to `_forward` (mirrors ComfyUI qwen_image/model.py)
-
+        self.gradient_checkpointing = False    # Forward wrapper: explicitly pass `control` to `_forward` (mirrors ComfyUI qwen_image/model.py)
     def forward(self, x, timesteps, context, attention_mask=None, guidance=None, ref_latents=None, transformer_options={}, control=None, **kwargs):
-
-        return comfy.patcher_extension.WrapperExecutor.new_class_executor(self._forward, self, comfy.patcher_extension.get_all_wrappers(comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, transformer_options)).execute(x, timesteps, context, attention_mask, guidance, ref_latents, transformer_options, control, **kwargs)
+        return comfy.patcher_extension.WrapperExecutor.new_class_executor(
+            self._forward, self, comfy.patcher_extension.get_all_wrappers(
+                comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, transformer_options),
+        ).execute(x, timesteps, context, attention_mask, guidance, ref_latents, transformer_options,
+                  control, **kwargs)
 
 
     def _forward(
@@ -766,7 +766,11 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
                         image_rotary_emb=image_rotary_emb,
                     )
                 # ControlNet helpers(device/dtype-safe residual adds)
-                _control = control if control is not None else (transformer_options.get("control", None) if isinstance(transformer_options, dict) else None)
+                _control = (
+                    control
+                    if control is not None
+                    else (transformer_options.get("control", None) if isinstance(transformer_options, dict) else None)
+                )
                 if isinstance(_control, dict):
                     control_i = _control.get("input")
                     try:
@@ -779,7 +783,10 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
                 if control_i is not None and i < len(control_i):
                     add = control_i[i]
                     if add is not None:
-                        if getattr(add, 'device', None) != hidden_states.device or getattr(add, 'dtype', None) != hidden_states.dtype:
+                        if (
+                            getattr(add, "device", None) != hidden_states.device
+                            or getattr(add, "dtype", None) != hidden_states.dtype
+                        ):
                             add = add.to(device=hidden_states.device, dtype=hidden_states.dtype, non_blocking=True)
                         t = min(hidden_states.shape[1], add.shape[1])
                         if t > 0:
