@@ -20,7 +20,6 @@ from comfy.ldm.qwen_image.model import (
     QwenTimestepProjEmbeddings,
     apply_rotary_emb,
 )
-import comfy.patcher_extension
 from torch import nn
 
 from nunchaku.models.linear import AWQW4A16Linear, SVDQW4A4Linear
@@ -28,6 +27,7 @@ from nunchaku.models.utils import CPUOffloadManager
 from nunchaku.ops.fused import fused_gelu_mlp
 
 from ..mixins.model import NunchakuModelMixin
+import comfy.patcher_extension
 
 
 class NunchakuGELU(GELU):
@@ -617,7 +617,7 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
     def forward(
         self,
         x,
-        timestep,
+        timesteps,
         context,
         attention_mask=None,
         guidance=None,
@@ -626,18 +626,15 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
         control=None,
         **kwargs,
     ):
-        """Forward wrapper that explicitly forwards ControlNet conditioning.
-
-        Adapted from ComfyUI qwen_image/model.py forward wrapper; we pass `control`
-        to `_forward` to avoid loss via **kwargs in some runtimes.
-        """
+        # Explicitly forward `control` to `_forward` using the WrapperExecutor.
+        # Source: mirrors ComfyUI qwen_image/model.py forward wrapper semantics.
         return comfy.patcher_extension.WrapperExecutor.new_class_executor(
             self._forward,
             self,
             comfy.patcher_extension.get_all_wrappers(
                 comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, transformer_options
             ),
-        ).execute(x, timestep, context, attention_mask, guidance, ref_latents, transformer_options, control, **kwargs)
+        ).execute(x, timesteps, context, attention_mask, guidance, ref_latents, transformer_options, control, **kwargs)
 
 
     def _forward(
