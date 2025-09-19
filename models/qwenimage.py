@@ -4,6 +4,7 @@ This module implements the Nunchaku Qwen-Image model and related components.
 .. note::
 
     Inherits and modifies from https://github.com/comfyanonymous/ComfyUI/blob/v0.3.51/comfy/ldm/qwen_image/model.py
+from ..wrappers.qwenimage import update_model_with_qwen_lora
 """
 
 import gc
@@ -27,7 +28,6 @@ from nunchaku.models.utils import CPUOffloadManager
 from nunchaku.ops.fused import fused_gelu_mlp
 
 from ..mixins.model import NunchakuModelMixin
-import comfy.patcher_extension  # WrapperExecutor for forward wrapper
 
 
 class NunchakuGELU(GELU):
@@ -613,14 +613,7 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
             dtype=dtype,
             device=device,
         )
-        self.gradient_checkpointing = False    # Forward wrapper: explicitly pass `control` to `_forward` (mirrors ComfyUI qwen_image/model.py)
-    def forward(self, x, timesteps, context, attention_mask=None, guidance=None, ref_latents=None, transformer_options={}, control=None, **kwargs):
-        return comfy.patcher_extension.WrapperExecutor.new_class_executor(
-            self._forward, self, comfy.patcher_extension.get_all_wrappers(
-                comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, transformer_options),
-        ).execute(x, timesteps, context, attention_mask, guidance, ref_latents, transformer_options,
-                  control, **kwargs)
-
+        self.gradient_checkpointing = False
 
     def _forward(
         self,
@@ -733,6 +726,16 @@ class NunchakuQwenImageTransformer2DModel(NunchakuModelMixin, QwenImageTransform
         compute_stream = torch.cuda.current_stream()
         if self.offload:
             self.offload_manager.initialize(compute_stream)
+        # --- Apply Qwen LoRA once per forward (records path) ---
+        try:
+            _records = getattr(self, 'qwen_loras', None)
+            if _records:
+                update_model_with_qwen_lora(self, _records)
+            elif hasattr(self, 'reset_lora'):
+                self.reset_lora()
+        except Exception as e:
+            print(f"[Qwen-LoRA] apply error: {e}")
+
 
         for i, block in enumerate(self.transformer_blocks):
             with torch.cuda.stream(compute_stream):
