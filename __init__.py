@@ -104,6 +104,14 @@ try:
 except ImportError:
     logger.exception("Node `NunchakuWheelInstaller` import failed:")
 
+# ==== Qwen-Image Auto LoRA (minimal addition) ====
+try:
+    from .nodes.lora.qwenimage import NunchakuQwenImageAutoLoRALoader
+    NODE_CLASS_MAPPINGS["NunchakuQwenImageAutoLoRALoader"] = NunchakuQwenImageAutoLoRALoader
+except Exception as _e:
+    logger.exception("Qwen-Image Auto LoRA nodes import failed: %s", _e)
+
+
 NODE_DISPLAY_NAME_MAPPINGS = {k: v.TITLE for k, v in NODE_CLASS_MAPPINGS.items()}
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
 logger.info("=" * (80 + len(" ComfyUI-nunchaku Initialization ")))
