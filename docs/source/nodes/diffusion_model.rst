@@ -38,14 +38,23 @@ A node for loading Nunchaku FLUX models. It manages model loading, device select
 Nunchaku Qwen-Image DiT Loader
 ------------------------------
 
-.. image:: https://huggingface.co/datasets/nunchaku-tech/cdn/resolve/main/ComfyUI-nunchaku/nodes/NunchakuQwenImageDiTLoader.png
+.. image:: https://huggingface.co/datasets/nunchaku-tech/cdn/resolve/main/ComfyUI-nunchaku/workflows/NunchakuQwenImageDiTLoader-v1.0.1.png
     :alt: NunchakuQwenImageDiTLoader
 
 A node for loading Nunchaku Qwen-Image models.
 
 **Inputs:**
 
-- **model_name**: The name of the Nunchaku Qwen-Image model. You can download the model from `HuggingFace <hf_nunchaku_>`_ or `ModelScope <ms_nunchaku_>`_.
+- **model_name**: The filename of the Nunchaku Qwen-Image model to load. You can download the model from `HuggingFace <hf_nunchaku_>`_ or `ModelScope <ms_nunchaku_>`_.
+- **cpu_offload**: Whether to enable CPU offload for the transformer model. Options:
+  
+  - ``auto``: Enables CPU offload if GPU memory is less than 15GiB.
+  - ``enable``: Force enable CPU offload.
+  - ``disable``: Disable CPU offload.
+
+- **num_blocks_on_gpu** *(optional)*: When CPU offload is enabled, determines how many transformer blocks remain on GPU memory. Increasing this value decreases CPU RAM usage but increases GPU memory usage. Default is 1.
+- **use_pin_memory** *(optional)*: Whether to use pinned memory for transformer blocks when CPU offload is enabled. Options: ``enable`` or ``disable`` (default). Enabling this can improve data transfer speed between CPU and GPU, but may increase system memory usage.
+
 
 **Outputs:**
 
